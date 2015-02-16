@@ -52,10 +52,23 @@ render_image_region = (r'^render_image_region/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>
 Returns a jpeg of the OMERO image, rendering only a region specified in query string as
 region=x,y,width,height. E.g. region=0,512,256,256 See L{views.render_image_region}. 
 Rendering settings can be specified in the request parameters.
+Params in render_image_region/<iid>/<z>/<t>/<w>/<h>/ are:
+    - iid:  Image ID
+    - z:    Z index
+    - t:    T index
+"""
+
+render_image_region_quality = (r'^render_image_region_quality/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?P<q>[^/]+)/$', 'webgateway.views.render_image_region_quality')
+"""
+Returns a jpeg of the OMERO image, rendering only a region specified in query string as
+region=x,y,width,height. E.g. region=0,512,256,256. If the image is much bigger than the
+indicated baseline size, it is resized with Pillow.  See L{views.render_image_region_quality}. 
+Rendering settings can be specified in the request parameters.
 Params in render_image/<iid>/<z>/<t>/ are:
     - iid:  Image ID
     - z:    Z index
     - t:    T index
+    - q:    Optional baseline width
 """
 
 render_split_channel = (r'^render_split_channel/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/$', 'webgateway.views.render_split_channel')
@@ -100,6 +113,18 @@ Returns a thumbnail jpeg of the OMERO Image, optionally scaled to max-width and 
 See L{views.render_thumbnail}. Uses current rendering settings. 
 Params in render_thumbnail/<iid>/<w>/<h> are:
     - iid:  Image ID
+    - w:    Optional max width
+    - h:    Optional max height
+"""
+
+render_slice_thumbnail = url(r'^render_slice_thumbnail/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?:(?P<w>[^/]+)/)?(?:(?P<h>[^/]+)/)?$', 'webgateway.views.render_slice_thumbnail')
+"""
+Returns a thumbnail jpeg of the OMERO Image in a thumbnail, optionally scaled to max-width and max-height.
+See L{views.render_thumbnail}. Uses current rendering settings. 
+Params in render_thumbnail/<iid>/<w>/<h> are:
+    - iid:  Image ID
+    - z:    Z index
+    - t:    T index
     - w:    Optional max width
     - h:    Optional max height
 """
@@ -305,12 +330,14 @@ urlpatterns = patterns('',
     webgateway,
     render_image,
     render_image_region,
+    render_image_region_quality,
     render_split_channel,
     render_row_plot,
     render_col_plot,
     render_roi_thumbnail,
     render_shape_thumbnail,
     render_thumbnail,
+    render_slice_thumbnail,
     render_birds_eye_view,
     render_ome_tiff,
     render_movie,

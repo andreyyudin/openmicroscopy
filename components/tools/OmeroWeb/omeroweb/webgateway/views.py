@@ -318,6 +318,68 @@ def render_thumbnail (request, iid, w=None, h=None, conn=None, _defcb=None, **kw
     return rsp
 
 @login_required()
+def render_slice_thumbnail (request, iid, z, t, w=None, h=None, conn=None, _defcb=None, **kwargs):
+    """
+    Returns an HttpResponse wrapped jpeg with the rendered thumbnail for image ‘iid’ for the z, t slice
+
+    @param request:     http request
+    @param iid:         Image ID
+    @param z:           Z index
+    @param t:           T index
+    @param w:           Thumbnail max width. 64 by default
+    @param h:           Thumbnail max height
+    @return:            http response containing jpeg
+    """
+
+    server_id = request.session['connector'].server_id
+    direct = True
+    if w is None:
+        size = (64,)
+    else:
+        if h is None:
+            size = (int(w),)
+        else:
+            size = (int(w), int(h))
+    if size == (96,):
+        direct = False
+
+    #OMERO only generates thumbnails for saved rendering settings 
+    pi = _get_prepared_image(request, iid, server_id=server_id, saveDefs=True, conn=conn) 
+    if pi is None:
+        logger.debug("(b)Image %s not found..." % (str(iid)))
+        if _defcb:
+            jpeg_data = _defcb(size=size)
+            prevent_cache = True
+        else:
+            raise Http404
+    img, compress_quality = pi
+    
+    rdefId = request.REQUEST.get('rdefId', None)
+    if rdefId is not None:
+        rdefId = int(rdefId)
+
+    #Thumbnail code
+    jpeg_data = webgateway_cache.getImage(request, server_id, img, z, t, ctx='thumbslice' + w + 'x' + h)
+    if jpeg_data is None:
+        prevent_cache = False
+        jpeg_data = img.getThumbnail(size=size, z=int(z), t=int(t), direct=direct, rdefId=rdefId)
+        if jpeg_data is None:
+            logger.debug("(c)Image %s not found..." % (str(iid)))
+            if _defcb:
+                jpeg_data = _defcb(size=size)
+                prevent_cache = True
+            else:
+                return HttpResponseServerError('Failed to render thumbnail')
+        else:
+            prevent_cache = img._thumbInProgress
+        if not prevent_cache:
+            webgateway_cache.setImage(request, server_id, img, z, t, jpeg_data, ctx='thumbslice' + w + 'x' + h)
+    else:
+        pass
+    rsp = HttpResponse(jpeg_data, content_type='image/jpeg')
+    return rsp
+
+@login_required()
 def render_roi_thumbnail (request, roiId, w=None, h=None, conn=None, **kwargs):
     """
     For the given ROI, choose the shape to render (first time-point, mid z-section) then render
@@ -384,7 +446,6 @@ def render_shape_thumbnail (request, shapeId, w=None, h=None, conn=None, **kwarg
     image, compress_quality = pi
 
     return get_shape_thumbnail (request, conn, image, shape, compress_quality)
-
 
 def get_shape_thumbnail (request, conn, image, s, compress_quality):
     """
@@ -674,6 +735,7 @@ def _get_prepared_image (request, iid, server_id=None, conn=None, saveDefs=False
     return (img, compress_quality)
 
 @login_required()
+
 def render_image_region(request, iid, z, t, conn=None, **kwargs):
     """
     Returns a jpeg of the OMERO image, rendering only a region specified in query string as
@@ -706,10 +768,9 @@ def render_image_region(request, iid, z, t, conn=None, **kwargs):
         try:
             img._prepareRenderingEngine()
             w, h = img._re.getTileSize()
-            levels = img._re.getResolutionLevels()-1
+            levels = img._re.getResolutionLevels() - 1
 
             zxyt = tile.split(",")
-
             #w = int(zxyt[3])
             #h = int(zxyt[4])
             level = levels-int(zxyt[0])
@@ -744,6 +805,87 @@ def render_image_region(request, iid, z, t, conn=None, **kwargs):
     return rsp
 
 @login_required()
+
+def render_image_region_quality(request, iid, z, t, q, conn=None, **kwargs):
+    """
+    Returns a jpeg of the OMERO image, rendering only a region specified in query string as
+    region=x,y,width,height and resizing it. E.g. region=0,512,256,256
+    Rendering settings can be specified in the request parameters.
+
+    @param request:     http request
+    @param iid:         image ID
+    @param z:           Z index
+    @param t:           T index
+    @param q:           Jpeg compression quality
+    @param conn:        L{omero.gateway.BlitzGateway} connection
+    @return:            http response wrapping jpeg
+    """
+    server_id = request.session['connector'].server_id
+    # if the region=x,y,w,h is not parsed correctly to give 4 ints then we simply provide whole image plane.
+    # alternatively, could return a 404?
+    #if h == None:
+    #    return render_image (request, iid, z, t, server_id=None, _conn=None, **kwargs)
+    pi = _get_prepared_image(request, iid, server_id=server_id, conn=conn)
+
+    if pi is None:
+        raise Http404
+    img, compress_quality = pi
+
+    tile = request.REQUEST.get('tile', None)
+    region = request.REQUEST.get('region', None)
+    level = None
+
+    if tile:
+        try:
+            img._prepareRenderingEngine()
+            w, h = img._re.getTileSize()
+            levels = img._re.getResolutionLevels() - 1
+
+            zxyt = tile.split(",")
+            #w = int(zxyt[3])
+            #h = int(zxyt[4])
+            level = levels-int(zxyt[0])
+
+            x = int(zxyt[1])*w
+            y = int(zxyt[2])*h
+        except:
+            logger.debug("render_image_region_quality: tile=%s" % tile)
+            logger.debug(traceback.format_exc())
+            
+    elif region:
+        try:
+            xywh = region.split(",")
+
+            x = int(xywh[0])
+            y = int(xywh[1])
+            w = int(xywh[2])
+            h = int(xywh[3])
+        except:
+            logger.debug("render_image_region_quality: region=%s" % region)
+            logger.debug(traceback.format_exc())
+
+    # region details and quality in request are used as key for caching.
+    jpeg_data = webgateway_cache.getImage(request, server_id, img, z, t, ctx=q)
+    jpeg_quality = float(q) / 100.0
+    if jpeg_data is None:
+        """
+        jpeg_data_orig = img.renderJpegRegion(z,t,x,y,w,h,level=level, compression=jpeg_quality)
+        pillow_img = Image.open(StringIO(jpeg_data_orig))
+        pillow_img = pillow_img.convert(mode="L")
+        rv = StringIO()
+        pillow_img.save(rv, 'jpeg', quality=int(10))
+        jpeg_data = rv.getvalue()
+        """
+        jpeg_data = img.renderJpegRegion(z,t,x,y,w,h,level=level, compression=jpeg_quality)
+        if jpeg_data is None:
+            raise Http404
+        webgateway_cache.setImage(request, server_id, img, z, t, jpeg_data, ctx=q)
+
+    rsp = HttpResponse(jpeg_data, content_type='image/jpeg')
+    return rsp
+
+@login_required()
+
 def render_image (request, iid, z=None, t=None, conn=None, **kwargs):
     """
     Renders the image with id {{iid}} at {{z}} and {{t}} as jpeg.
@@ -754,6 +896,7 @@ def render_image (request, iid, z=None, t=None, conn=None, **kwargs):
     @param iid:         image ID
     @param z:           Z index
     @param t:           T index
+
     @param conn:        L{omero.gateway.BlitzGateway} connection
     @return:            http response wrapping jpeg
     """
@@ -764,7 +907,7 @@ def render_image (request, iid, z=None, t=None, conn=None, **kwargs):
     img, compress_quality = pi
     jpeg_data = webgateway_cache.getImage(request, server_id, img, z, t)
     if jpeg_data is None:
-        jpeg_data = img.renderJpeg(z,t, compression=compress_quality)
+        jpeg_data = img.renderJpeg(z,t,compression=compress_quality)
         if jpeg_data is None:
             raise Http404
         webgateway_cache.setImage(request, server_id, img, z, t, jpeg_data)
