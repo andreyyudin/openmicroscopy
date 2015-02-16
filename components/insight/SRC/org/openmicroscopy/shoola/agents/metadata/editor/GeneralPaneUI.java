@@ -2,7 +2,7 @@
  * org.openmicroscopy.shoola.agents.metadata.editor.GeneralPaneUI 
  *
  *------------------------------------------------------------------------------
- *  Copyright (C) 2006-2014 University of Dundee. All rights reserved.
+ *  Copyright (C) 2006-2015 University of Dundee. All rights reserved.
  *
  *
  * 	This program is free software; you can redistribute it and/or modify
@@ -26,7 +26,6 @@ package org.openmicroscopy.shoola.agents.metadata.editor;
 //Java imports
 import java.awt.BorderLayout;
 import java.awt.Cursor;
-import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.io.File;
@@ -34,14 +33,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
-
-import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.BoxLayout;
 import javax.swing.JPanel;
-
-
-
 import javax.swing.JSeparator;
 
 //Third-party libraries
@@ -170,22 +162,21 @@ class GeneralPaneUI
 		
 		annotationTaskPane = EditorUtil.createTaskPane("Annotations");
 		annotationTaskPane.setCollapsed(false);
+		
+		GridBagConstraints c = new GridBagConstraints();
+		c.gridx = 0;
+		c.gridy = 0;
+		c.fill = GridBagConstraints.HORIZONTAL;
+		c.weightx = 1;
 		JPanel p = new JPanel();
 		p.setBackground(UIUtilities.BACKGROUND_COLOR);
-		p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
-		p.add(annotationUI);
-		p.add(new JSeparator());
-		p.add(textualAnnotationsUI);
+		p.setLayout(new GridBagLayout());
+		p.add(annotationUI,c );
+		c.gridy++;
+		p.add(new JSeparator(), c);
+		c.gridy++;
+		p.add(textualAnnotationsUI, c);
 		annotationTaskPane.add(p);
-	}
-	
-	@Override
-	public Dimension getPreferredSize() {
-		// Workaround:
-		// Without this, the JTextAreas displaying comments will expand, when the slider is moved
-		// to the left, but never shrink again, when the slider is again moved to the right.
-		// TODO: Replace if a better solution for this is found
-		return new Dimension(getParent().getSize().width, super.getPreferredSize().height);
 	}
 	
 	/** Builds and lays out the components. */

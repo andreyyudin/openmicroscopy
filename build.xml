@@ -513,11 +513,6 @@ To get started using Eclipse, execute "./build.py build-dev" and import the top-
             <mapper type="regexp" from="importer(.*).zip"  to="OMERO.importer-${omero.version}\1.zip"/>
         </copy>
        	<copy file="components/insight/target/insight-ij.zip" tofile="target/OMERO.insight-ij-${omero.version}.zip"/>
-
-        <apply executable="python" dir="${target.dir}" failonerror="true">
-           <env key="OMERO_VERSION" value="${omero.version}"/>
-           <fileset dir="${omero.home}/lib" includes="composite.py"/>
-       </apply>
     </target>
 
     <target name="release-tar" description="Tar the dist directory into ${product-name}-${omero.version}.tar.bz2">
@@ -544,24 +539,6 @@ To get started using Eclipse, execute "./build.py build-dev" and import the top-
     <target name="release-findbugs" description="Generates findbugs.xml and checkstyle.xml for all components" depends="init">
        <iterate buildpathref="all.buildpath"   target="findbugs"/>
        <iterate buildpathref="tools.buildpath" target="findbugs"/>
-    </target>
-
-    <target name="release-coverage" depends="build-eclipse"
-        description="Merge code coverage reports into single top-level report">
-        <path id="omero.classpath">
-                <fileset dir="${omero.home}/target/libs" />
-        </path>
-        <taskdef resource="emma_ant.properties" classpathref="omero.classpath" />
-        <emma>
-            <merge outfile="${target.dir}/coverage.es" >
-                <fileset dir="components" includes="**/target/coverage.emma,**/target/metadata.emma"/>
-            </merge>
-            <report sourcepath="${src.dir}" >
-                <fileset dir="${target.dir}" includes="coverage.es"/>
-                <html outfile="${target.dir}/coverage.html" />
-                <xml outfile="${target.dir}/coverage.xml" />
-            </report>
-        </emma>
     </target>
 
     <target name="release-docs" depends="release-javadoc,release-sphinx-api,release-slice2html" description="Generate Docs for all components under dist/docs/api">
@@ -797,8 +774,8 @@ To get started using Eclipse, execute "./build.py build-dev" and import the top-
                 <fileset dir="${omero.home}/etc">
                     <exclude name="local.properties"/>
                 </fileset>
-                <fileset dir="${omero.home}/components/tests/ui/resources" includes="robot.template"/>
             </copy>
+            <copy file="${omero.home}/components/tests/ui/resources/robot.template" todir="${dist.dir}/etc/templates"/>
 
             <replace dir="${dist.dir}/etc" token="@ICE_LIB_VERSION@" value="${versions.ice_lib}"/>
     </target>

@@ -240,11 +240,11 @@ CUSTOM_HOST = CUSTOM_SETTINGS.get("Ice.Default.Host", "localhost")
 INTERNAL_SETTINGS_MAPPING = {
     "omero.qa.feedback":
         ["FEEDBACK_URL", "http://qa.openmicroscopy.org.uk", str, None],
-    "omero.upgrades.url":
-        ["UPGRADES_URL", "http://upgrade.openmicroscopy.org.uk/", str, None],
+    "omero.web.upgrades.url":
+        ["UPGRADES_URL", None, leave_none_unset, None],
 
     # Allowed hosts:
-    # https://docs.djangoproject.com/en/1.5/ref/settings/#allowed-hosts
+    # https://docs.djangoproject.com/en/1.6/ref/settings/#allowed-hosts
     "omero.web.allowed_hosts":
         ["ALLOWED_HOSTS", '["*"]', json.loads, None],
 
@@ -301,7 +301,7 @@ CUSTOM_SETTINGS_MAPPINGS = {
         ["APPLICATION_SERVER_PORT", "4080", str, "Upstream application port"],
     "omero.web.application_server.max_requests":
         ["APPLICATION_SERVER_MAX_REQUESTS", 400, int, None],
-    "omero.web.force_script_name":
+    "omero.web.prefix":
         ["FORCE_SCRIPT_NAME",
          None,
          leave_none_unset,
@@ -319,19 +319,18 @@ CUSTOM_SETTINGS_MAPPINGS = {
         ["SESSION_ENGINE",
          DEFAULT_SESSION_ENGINE,
          check_session_engine,
-         ("Controls where Django stores session data. See `Configuring the "
-          "session engine for more details "
-          " <https://docs.djangoproject.com/en/1.6/ref/settings/"
-          "#session-engine>`_.")],
+         ("Controls where Django stores session data. See :djangodoc:"
+          "`Configuring the session engine for more details <ref/settings"
+          "/#session-engine>`.")],
     "omero.web.session_expire_at_browser_close":
         ["SESSION_EXPIRE_AT_BROWSER_CLOSE",
          "true",
          parse_boolean,
          ("A boolean that determines whether to expire the session when the "
-          "user closes their browser. See `Django Browser-length sessions vs."
-          " persistent sessions documentation "
-          " <https://docs.djangoproject.com/en/1.6/topics/http/sessions/"
-          "#browser-length-vs-persistent-sessions>`_ for more details.")],
+          "user closes their browser. See :djangodoc:`Django Browser-length "
+          "sessions vs. persistent sessions documentation <topics/http/"
+          "sessions/#browser-length-vs-persistent-sessions>` for more "
+          "details.")],
 
     "omero.web.caches":
         ["CACHES",
@@ -339,10 +338,9 @@ CUSTOM_SETTINGS_MAPPINGS = {
           ' "django.core.cache.backends.dummy.DummyCache"}}'),
          json.loads,
          ("OMERO.web offers alternative session backends to automatically"
-          " delete stale data using the cache session store backend, see"
-          " `Django cached session documentation"
-          " <https://docs.djangoproject.com/en/1.6/topics/http/sessions/"
-          "#using-cached-sessions>`_  for more details.")],
+          " delete stale data using the cache session store backend, see "
+          ":djangodoc:`Django cached session documentation <topics/http/"
+          "sessions/#using-cached-sessions>` for more details.")],
     "omero.web.session_cookie_age":
         ["SESSION_COOKIE_AGE",
          86400,
@@ -517,9 +515,8 @@ CUSTOM_SETTINGS_MAPPINGS = {
          '{}',
          json.loads,
          ("Redirect to the givin location after loging in. It only support "
-          "arguments for `Django reverse function"
-          " <https://docs.djangoproject.com/en/1.6/ref/urlresolvers/"
-          "#django.core.urlresolvers.reverse>`_. "
+          "arguments for :djangodoc:`Django reverse function"
+          " <ref/urlresolvers/#django.core.urlresolvers.reverse>`. "
           "For example: ``'{\"redirect\": [\"webindex\"], \"viewname\":"
           " \"load_template\", \"args\":[\"userdata\"], \"query_string\":"
           " \"experimenter=-1\"}'``")],
@@ -542,7 +539,9 @@ CUSTOM_SETTINGS_MAPPINGS = {
          ('['
           '["Data", "webindex", {"title": "Browse Data via Projects, Tags'
           ' etc"}],'
-          '["History", "history", {"title": "History"}]'
+          '["History", "history", {"title": "History"}],'
+          '["Help", "http://help.openmicroscopy.org/",'
+          '{"title":"Open OMERO user guide in a new tab", "target":"new"}]'
           ']'),
          json.loads,
          ("Add links to the top header: links are ``['Link Text', 'link',"
@@ -551,12 +550,6 @@ CUSTOM_SETTINGS_MAPPINGS = {
           "E.g. ``'[[\"Webtest\", \"webtest_index\"], [\"Homepage\","
           " \"http://...\", {\"title\": \"Homepage\", \"target\": \"new\"}"
           " ]]'``")],
-    "omero.web.ui.menu.dropdown":
-        ["UI_MENU_DROPDOWN",
-         ('{"LEADERS": "Owners", "COLLEAGUES": "Members", '
-          '"ALL": "All members"}'),
-         json.loads,
-         "Shows/hides users in dropdown menu."],
     "omero.web.ui.right_plugins":
         ["RIGHT_PLUGINS",
          ('[["Acquisition",'
@@ -589,18 +582,16 @@ CUSTOM_SETTINGS_MAPPINGS = {
          leave_none_unset_int,
          ("Configuration options for the viewer. -1: zoom in fully,"
           " 0: zoom out fully, unset: zoom to fit window")],
-    "omero.web.scripts_to_ignore":
-        ["SCRIPTS_TO_IGNORE",
-         ('["/omero/figure_scripts/Movie_Figure.py", '
-          '"/omero/figure_scripts/Split_View_Figure.py", '
-          '"/omero/figure_scripts/Thumbnail_Figure.py", '
-          '"/omero/figure_scripts/ROI_Split_Figure.py", '
-          ' "/omero/export_scripts/Make_Movie.py",'
-          '"/omero/setup_scripts/FLIM_initialise.py", '
-          '"/omero/import_scripts/Populate_ROI.py"]'),
-         parse_paths,
-         None],
 
+}
+
+DEPRECATED_SETTINGS_MAPPINGS = {
+    # Deprecated settings, description should indicate the replacement.
+    "omero.web.force_script_name":
+        ["FORCE_SCRIPT_NAME",
+         None,
+         leave_none_unset,
+         ("Use omero.web.prefix instead.")],
 }
 
 del CUSTOM_HOST
@@ -614,14 +605,6 @@ DEVELOPMENT_SETTINGS_MAPPINGS = {
     # "DESCRIPTION":"This is a virtual container with orphaned images. These
     # images are not linked anywhere. Just drag them to the selected
     # container."}'
-    "omero.web.ui.tree.orphaned":
-        ["UI_TREE_ORPHANED",
-         ('{"NAME":"Orphaned images",'
-          ' "DESCRIPTION":"This is a virtual container with orphaned images.'
-          ' These images are not linked anywhere. Just drag them to the'
-          ' selected container."}'),
-         json.loads,
-         None],
     "omero.web.webstart_admins_only":
         ["WEBSTART_ADMINS_ONLY", "false", parse_boolean, None],
     "omero.web.webadmin.enable_email":
@@ -629,8 +612,31 @@ DEVELOPMENT_SETTINGS_MAPPINGS = {
 }
 
 
-def process_custom_settings(module, settings='CUSTOM_SETTINGS_MAPPINGS'):
+def map_deprecated_settings(settings):
+    m = {}
+    for key, values in settings.items():
+        try:
+            global_name = values[0]
+            m[global_name] = (CUSTOM_SETTINGS[key], key)
+            if len(values) < 5:
+                # Not using default (see process_custom_settings)
+                values.append(False)
+        except KeyError:
+            if len(values) < 5:
+                values.append(True)
+    return m
+
+
+def process_custom_settings(
+        module, settings='CUSTOM_SETTINGS_MAPPINGS', deprecated=None):
     logging.info('Processing custom settings for module %s' % module.__name__)
+
+    if deprecated:
+        deprecated_map = map_deprecated_settings(
+            getattr(module, deprecated, {}))
+    else:
+        deprecated_map = {}
+
     for key, values in getattr(module, settings, {}).items():
         # Django may import settings.py more than once, see:
         # http://blog.dscpl.com.au/2010/03/improved-wsgi-script-for-use-with.html
@@ -648,6 +654,17 @@ def process_custom_settings(module, settings='CUSTOM_SETTINGS_MAPPINGS'):
             values.append(True)
 
         try:
+            using_default = values[-1]
+            if global_name in deprecated_map:
+                dep_value, dep_key = deprecated_map[global_name]
+                if using_default:
+                    logging.warning(
+                        'Setting %s is deprecated, use %s', dep_key, key)
+                    global_value = dep_value
+                else:
+                    logging.error(
+                        '%s and its deprecated key %s are both set, using %s',
+                        key, dep_key, key)
             setattr(module, global_name, mapping(global_value))
         except ValueError:
             raise ValueError(
@@ -656,7 +673,8 @@ def process_custom_settings(module, settings='CUSTOM_SETTINGS_MAPPINGS'):
             pass
 
 process_custom_settings(sys.modules[__name__], 'INTERNAL_SETTINGS_MAPPING')
-process_custom_settings(sys.modules[__name__], 'CUSTOM_SETTINGS_MAPPINGS')
+process_custom_settings(sys.modules[__name__], 'CUSTOM_SETTINGS_MAPPINGS',
+                        'DEPRECATED_SETTINGS_MAPPINGS')
 process_custom_settings(sys.modules[__name__], 'DEVELOPMENT_SETTINGS_MAPPINGS')
 
 if not DEBUG:  # from CUSTOM_SETTINGS_MAPPINGS  # noqa
@@ -688,6 +706,17 @@ def report_settings(module):
             logger.debug(
                 "%s = %r (source:%s)", global_name,
                 cleanse_setting(global_name, global_value), source)
+
+    deprecated_settings = getattr(module, 'DEPRECATED_SETTINGS_MAPPINGS', {})
+    for key in sorted(deprecated_settings):
+        values = deprecated_settings[key]
+        global_name, default_value, mapping, description, using_default = \
+            values
+        global_value = getattr(module, global_name, None)
+        if global_name.isupper() and not using_default:
+            logger.debug(
+                "%s = %r (deprecated:%s, %s)", global_name,
+                cleanse_setting(global_name, global_value), key, description)
 
 report_settings(sys.modules[__name__])
 
@@ -721,7 +750,7 @@ SECRET_KEY = '@@k%g#7=%4b6ib7yr1tloma&g0s2nni6ljf!m0h&x9c712c7yj'
 USE_I18N = True
 
 # MIDDLEWARE_CLASSES: A tuple of middleware classes to use.
-# See https://docs.djangoproject.com/en/1.3/topics/http/middleware/.
+# See https://docs.djangoproject.com/en/1.6/topics/http/middleware/.
 MIDDLEWARE_CLASSES = (
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

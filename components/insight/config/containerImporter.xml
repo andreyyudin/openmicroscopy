@@ -49,7 +49,7 @@
     </structuredEntry>
 
     <!-- the value corresponding to the agent defined as the master
-    i.e. TreeViewerAgent = 0, EditorAgent = 1, ImporterAgent = 2
+    i.e. TreeViewerAgent = 0, ImporterAgent = 1
     The default value is 0.-->
     <entry name="/application/entryPoint" type="integer">2</entry>
 
@@ -222,13 +222,6 @@
         <config>dataBrowser.xml</config>
     </agent>
     <agent>
-        <name>Editor</name>
-        <number>1</number>
-        <active>false</active>
-        <class>org.openmicroscopy.shoola.agents.editor.EditorAgent</class>
-        <config>editor.xml</config>
-    </agent>
-    <agent>
         <name>Importer</name>
         <number>2</number>
         <active>true</active>
@@ -303,7 +296,7 @@
    * <entry name="SplashScreenLogo">client_splashscreen.png</entry>
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
   <entry name="Version">@OMERO_DISPLAY_VERSION@</entry>
-  <entry name="SoftwareName">OMERO.clients</entry>
+  <entry name="SoftwareName">OMERO.importer</entry>
   <entry name="AboutFile">about.xml</entry>
   <entry name="HelpOnLine">http://help.openmicroscopy.org/</entry>
   <entry name="Forum">http://www.openmicroscopy.org.uk/community/</entry>

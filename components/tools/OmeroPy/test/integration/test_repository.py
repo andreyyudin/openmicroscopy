@@ -12,7 +12,7 @@
 import platform
 import locale
 import pytest
-import test.integration.library as lib
+import library as lib
 import omero
 
 from omero import CmdError
@@ -29,7 +29,6 @@ from omero_version import omero_version
 class AbstractRepoTest(lib.ITest):
 
     def setup_method(self, method):
-        super(AbstractRepoTest, self).setup_method(method)
         self.unique_dir = self.test_dir()
 
     def test_dir(self, client=None):
@@ -813,3 +812,34 @@ class TestOriginalMetadata(AbstractRepoTest):
             assert dict == type(rsp.seriesMetadata)
         finally:
             handle.close()
+
+
+class TestDeletePerformance(AbstractRepoTest):
+
+    def testImport(self):
+        import time
+        s1 = time.time()
+        client = self.new_client()
+        mrepo = self.getManagedRepo(client)
+        folder = create_path(folder=True)
+        for x in range(200):
+            name = "%s.unknown" % x
+            (folder / name).touch()
+        paths = folder.files()
+        proc = mrepo.importPaths(paths)
+        hashes = self.upload_folder(proc, folder)
+        handle = proc.verifyUpload(hashes)
+        req = handle.getRequest()
+        fs = req.activity.getParent()
+        cb = CmdCallbackI(client, handle)
+        self.assertError(cb, loops=200)
+
+        delete = omero.cmd.Delete()
+        delete.type = "/Fileset"
+        delete.id = fs.id.val
+        s2 = time.time()
+        print s2 - s1,
+        t1 = time.time()
+        client.submit(delete, loops=200)
+        t2 = time.time()
+        print " ", t2-t1,

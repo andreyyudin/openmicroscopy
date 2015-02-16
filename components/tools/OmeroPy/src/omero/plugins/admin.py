@@ -26,12 +26,12 @@ import omero
 import omero.config
 
 from omero.cli import CLI
-from omero.cli import BaseControl
 from omero.cli import DirectoryType
 from omero.cli import NonZeroReturnCode
 from omero.cli import VERSION
 
-from omero.plugins.prefs import with_config
+from omero.plugins.prefs import \
+    WriteableConfigControl, with_config, with_rw_config
 
 from omero_ext import portalocker
 from omero_ext.which import whichall
@@ -59,11 +59,13 @@ Configuration properties:
  omero.windows.user
  omero.windows.pass
  omero.windows.servicename
+ omero.web.application_server.port
+ omero.web.server_list
 
 """ + "\n" + "="*50 + "\n"
 
 
-class AdminControl(BaseControl):
+class AdminControl(WriteableConfigControl):
 
     def _complete(self, text, line, begidx, endidx):
         """
@@ -76,7 +78,8 @@ class AdminControl(BaseControl):
             if i >= 0:
                 f = line[i+l:]
                 return self._complete_file(f)
-        return BaseControl._complete(self, text, line, begidx, endidx)
+        return WriteableConfigControl._complete(
+            self, text, line, begidx, endidx)
 
     def _configure(self, parser):
         sub = parser.sub()
@@ -294,6 +297,9 @@ Examples:
         ports.add_argument(
             "--ssl", default="4064",
             help="The ssl port to be used by Glacier2 (default: %(default)s)")
+        ports.add_argument(
+            "--webserver", default="4080",
+            help="The web application server port (default: %(default)s)")
         ports.add_argument(
             "--revert", action="store_true",
             help="Used to rollback from the given settings to the defaults")
@@ -556,6 +562,10 @@ present, the user will enter a console""")
         else:
             return "master"
 
+    def _get_grid_dir(self):
+        """Return path to grid directory containing configuration files"""
+        return self.ctx.dir / "etc" / "grid"
+
     def _cmd(self, *command_arguments):
         """
         Used to generate an icegridadmin command line argument list
@@ -579,7 +589,7 @@ present, the user will enter a console""")
             __d__ = "default.xml"
             if self._isWindows():
                 __d__ = "windefault.xml"
-            descript = self.ctx.dir / "etc" / "grid" / __d__
+            descript = self._get_grid_dir() / __d__
             self.ctx.err("No descriptor given. Using %s"
                          % os.path.sep.join(["etc", "grid", __d__]))
         return descript
@@ -870,13 +880,18 @@ present, the user will enter a console""")
     def jvmcfg(self, args, config, verbose=True):
         from xml.etree.ElementTree import XML
         from omero.install.jvmcfg import adjust_settings
-        templates = self.ctx.dir / "etc" / "grid" / "templates.xml"
-        generated = self.ctx.dir / "etc" / "grid" / "generated.xml"
+        templates = self._get_grid_dir() / "templates.xml"
+        generated = self._get_grid_dir() / "generated.xml"
         if generated.exists():
             generated.remove()
         config2 = omero.config.ConfigXml(str(generated))
         template_xml = XML(templates.text())
-        rv = adjust_settings(config, template_xml)
+        try:
+            rv = adjust_settings(config, template_xml)
+        except Exception, e:
+            self.ctx.die(11, 'Cannot adjust memory settings in %s.\n%s'
+                         % (templates, e))
+
         if verbose:
             self.ctx.out("JVM Settings:")
             self.ctx.out("============")
@@ -899,10 +914,12 @@ present, the user will enter a console""")
         config2.XML = None  # Prevent re-saving
         config2.close()
         config.save()
+        return rv
 
     @with_config
     def diagnostics(self, args, config):
         self.check_access(os.R_OK)
+        memory = self.jvmcfg(args, config, verbose=False)
         config = config.as_map()
         omero_data_dir = '/OMERO'
         try:
@@ -1088,42 +1105,6 @@ OMERO Diagnostics %s
                     win32service.CloseServiceHandle(hsc)
                 win32service.CloseServiceHandle(hscm)
 
-            # List SSL & TCP ports of deployed applications
-            self.ctx.out("")
-            p = self.ctx.popen(self._cmd("-e", "application list"))  # popen
-            rv = p.wait()
-            io = p.communicate()
-            if rv != 0:
-                self.ctx.out("Cannot list deployed applications.")
-                self.ctx.dbg("""
-                Stdout:\n%s
-                Stderr:\n%s
-                """ % io)
-            else:
-                applications = io[0].split()
-                applications.sort()
-                for s in applications:
-                    p2 = self.ctx.popen(
-                        self._cmd("-e", "application describe %s" % s))
-                    io2 = p2.communicate()
-                    if io2[1]:
-                        self.ctx.err(io2[1].strip())
-                    elif io2[0]:
-                        ssl_port, tcp_port = get_ports(io2[0])
-                        item("%s" % s, "SSL port")
-                        if not ssl_port:
-                            self.ctx.err("Not found")
-                        else:
-                            self.ctx.out("%s" % ssl_port)
-
-                        item("%s" % s, "TCP port")
-                        if not tcp_port:
-                            self.ctx.err("Not found")
-                        else:
-                            self.ctx.out("%s" % tcp_port)
-                    else:
-                        self.ctx.err("UNKNOWN!")
-
         if not args.no_logs:
 
             def log_dir(log, cat, cat2, knownfiles):
@@ -1209,7 +1190,37 @@ OMERO Diagnostics %s
         env_val("LD_LIBRARY_PATH")
         env_val("DYLD_LIBRARY_PATH")
 
+        # List SSL & TCP ports of deployed applications
         self.ctx.out("")
+        p = self.ctx.popen(self._cmd("-e", "application list"))  # popen
+        rv = p.wait()
+        io = p.communicate()
+        if rv != 0:
+            self.ctx.out("Cannot list deployed applications.")
+            self.ctx.dbg("""
+            Stdout:\n%s
+            Stderr:\n%s
+            """ % io)
+        else:
+            applications = io[0].split()
+            applications.sort()
+            for s in applications:
+                def port_val(port_type, value):
+                    item("%s %s port" % (s, port_type),
+                         "%s" % value or "Not found")
+                    self.ctx.out("")
+                p2 = self.ctx.popen(
+                    self._cmd("-e", "application describe %s" % s))
+                io2 = p2.communicate()
+                if io2[1]:
+                    self.ctx.err(io2[1].strip())
+                elif io2[0]:
+                    ssl_port, tcp_port = get_ports(io2[0])
+                    port_val("SSL", ssl_port)
+                    port_val("TCP", tcp_port)
+                else:
+                    self.ctx.err("UNKNOWN!")
+
         for dir_name, dir_path, dir_size in (
                 ("data", omero_data_dir, ""),
                 ("temp", omero_temp_dir, True)):
@@ -1218,10 +1229,23 @@ OMERO Diagnostics %s
             if dir_size and dir_path_exists:
                 dir_size = self.getdirsize(omero_temp_dir)
                 dir_size = "   (Size: %s)" % dir_size
-            self.ctx.out("OMERO %s dir: '%s'\tExists? %s\tIs writable? %s%s" %
-                         (dir_name, dir_path, dir_path_exists, is_writable,
+            item("OMERO %s dir" % dir_name, "'%s'" % dir_path)
+            self.ctx.out("Exists? %s\tIs writable? %s%s" %
+                         (dir_path_exists, is_writable,
                           dir_size))
 
+        # JVM settings
+        self.ctx.out("")
+        for k, v in sorted(memory.items()):
+            settings = v.pop(0)
+            sb = " ".join([str(x) for x in v])
+            if str(settings) != "Settings()":
+                sb += " # %s" % settings
+            item("JVM settings", " %s" % (k[0].upper() + k[1:]))
+            self.ctx.out("%s" % sb)
+
+        # OMERO.web diagnostics
+        self.ctx.out("")
         from omero.plugins.web import WebControl
         try:
             WebControl().status(args)
@@ -1338,9 +1362,9 @@ OMERO Diagnostics %s
         Callers are responsible for closing the
         returned ConfigXml object.
         """
-        cfg_xml = self.ctx.dir / "etc" / "grid" / "config.xml"
-        cfg_tmp = self.ctx.dir / "etc" / "grid" / "config.xml.tmp"
-        grid_dir = self.ctx.dir / "etc" / "grid"
+        cfg_xml = self._get_grid_dir() / "config.xml"
+        cfg_tmp = self._get_grid_dir() / "config.xml.tmp"
+        grid_dir = self._get_grid_dir()
         if not cfg_xml.exists() and self.can_access(grid_dir):
             if cfg_tmp.exists() and self.can_access(cfg_tmp):
                 self.ctx.dbg("Removing old config.xml.tmp")
@@ -1495,9 +1519,16 @@ OMERO Diagnostics %s
                            stdout=sys.stdout, stderr=sys.stderr)
         self.ctx.rv = p.wait()
 
-    def ports(self, args):
+    @with_rw_config
+    def ports(self, args, config):
         self.check_access()
         from omero.install.change_ports import change_ports
+        webserverkey = 'omero.web.application_server.port'
+        webserver_default_port = 4080
+        weblistkey = 'omero.web.server_list'
+        weblist_default_port = 4064
+        weblist_template = '[["localhost", %s, "omero"]]'
+
         if not args.skipcheck:
             if 0 == self.status(args, node_only=True):
                 self.ctx.die(
@@ -1507,10 +1538,48 @@ OMERO Diagnostics %s
             self.ctx.rv = 0
 
         if args.prefix:
-            for x in ("registry", "tcp", "ssl"):
+            for x in ("registry", "tcp", "ssl", "webserver"):
                 setattr(args, x, "%s%s" % (args.prefix, getattr(args, x)))
         change_ports(
             args.ssl, args.tcp, args.registry, args.revert, dir=self.ctx.dir)
+
+        # Use the same conditions as change_ports when modifying ports
+        if args.revert:
+            webserver_from = args.webserver
+            webserver_to = str(webserver_default_port)
+            weblist_from = weblist_template % args.ssl
+            weblist_to = weblist_template % str(weblist_default_port)
+        else:
+            webserver_from = str(webserver_default_port)
+            webserver_to = args.webserver
+            weblist_from = weblist_template % str(weblist_default_port)
+            weblist_to = weblist_template % args.ssl
+        try:
+            waport = config[webserverkey]
+        except KeyError:
+            waport = ''
+            webserver_from = ''
+        try:
+            weblist = config[weblistkey]
+        except KeyError:
+            weblist = ''
+            weblist_from = ''
+
+        if waport != webserver_from:
+            self.ctx.out('No match found for %s=%s in %s' % (
+                webserverkey, webserver_from, config.filename))
+        else:
+            config[webserverkey] = webserver_to
+            self.ctx.out('Converted: %s => %s %s in %s' % (
+                webserver_from, webserver_to, webserverkey, config.filename))
+
+        if weblist != weblist_from:
+            self.ctx.out('No match found for %s=%s in %s' % (
+                weblistkey, weblist_from, config.filename))
+        else:
+            config[weblistkey] = weblist_to
+            self.ctx.out('Converted: %s => %s %s in %s' % (
+                weblist_from, weblist_to, weblistkey, config.filename))
 
     def cleanse(self, args):
         self.check_access()

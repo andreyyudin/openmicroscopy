@@ -2,7 +2,7 @@
  * org.openmicroscopy.shoola.env.data.views.ImViewerViewImpl
  *
  *------------------------------------------------------------------------------
- *  Copyright (C) 2006 University of Dundee. All rights reserved.
+ *  Copyright (C) 2006-2015 University of Dundee. All rights reserved.
  *
  *
  * 	This program is free software; you can redistribute it and/or modify
@@ -123,14 +123,14 @@ class ImageDataViewImpl
 
     /**
      * Implemented as specified by the view interface.
-     * @see ImageDataView#render(long, PlaneDef, boolean, boolean, 
+     * @see ImageDataView#render(SecurityContext, long, PlaneDef, boolean, int,
      * AgentEventListener)
      */
     public CallHandle render(SecurityContext ctx, long pixelsID, PlaneDef pd,
-    		boolean asTexture, boolean largeImage, AgentEventListener observer)
+    		boolean largeImage, int compression, AgentEventListener observer)
     {
-        BatchCallTree cmd = new ImageRenderer(ctx, pixelsID, pd, asTexture,
-        		largeImage);
+        BatchCallTree cmd = new ImageRenderer(ctx, pixelsID, pd,
+        		largeImage, compression);
         return cmd.exec(observer);
     }
 
@@ -186,11 +186,10 @@ class ImageDataViewImpl
      */
 	public CallHandle renderProjected(SecurityContext ctx,
 		long pixelsID, int startZ, int endZ, int stepping, int algorithm,
-		List<Integer> channels, boolean openGLSupport,
-		AgentEventListener observer)
+		List<Integer> channels, AgentEventListener observer)
     {
 		BatchCallTree cmd = new ProjectionSaver(ctx, pixelsID, startZ, endZ,
-				                  stepping, algorithm, channels, openGLSupport);
+				                  stepping, algorithm, channels);
 		return cmd.exec(observer);
 	}
 
@@ -393,15 +392,15 @@ class ImageDataViewImpl
 
 	/**
      * Implemented as specified by the view interface.
-     * @see ImageDataView#renderOverLays(long, PlaneDef, long, Map, boolean, 
+     * @see ImageDataView#renderOverLays(long, PlaneDef, long, Map,
      * AgentEventListener)
      */
 	public CallHandle renderOverLays(SecurityContext ctx, long pixelsID,
 		PlaneDef pd, long tableID, Map<Long, Integer> overlays,
-		boolean asTexture, AgentEventListener observer)
+		AgentEventListener observer)
 	{
 		BatchCallTree cmd = new OverlaysRenderer(ctx, pixelsID, pd, tableID,
-				overlays, asTexture);
+				overlays);
 		return cmd.exec(observer);
 	}
 
@@ -463,15 +462,13 @@ class ImageDataViewImpl
 
 	/**
      * Implemented as specified by the view interface.
-     * @see ImageDataView#loadTiles(long, PlaneDef, List, boolean,
-     * AgentEventListener)
+     * @see ImageDataView#loadTiles(long, PlaneDef, List, AgentEventListener)
      */
 	public CallHandle loadTiles(SecurityContext ctx, long pixelsID,
 		PlaneDef pDef, RenderingControl proxy, Collection<Tile> tiles,
-		boolean asTexture, AgentEventListener observer)
+		AgentEventListener observer)
 	{
-		BatchCallTree cmd = new TileLoader(ctx, pixelsID, pDef, proxy, tiles,
-				asTexture);
+		BatchCallTree cmd = new TileLoader(ctx, pixelsID, pDef, proxy, tiles);
 		return cmd.exec(observer);
 	}
 	

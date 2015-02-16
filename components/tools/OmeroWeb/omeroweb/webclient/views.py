@@ -30,6 +30,7 @@ import logging
 import traceback
 import json
 import re
+import unicodedata
 
 from time import time
 
@@ -38,6 +39,8 @@ from omero_version import omero_version
 
 import omero, omero.scripts
 from omero.rtypes import wrap, unwrap
+
+from omero.gateway.utils import toBoolean
 
 from django.conf import settings
 from django.template import loader as template_loader
@@ -69,7 +72,7 @@ from controller.search import BaseSearch
 from controller.share import BaseShare
 
 from omeroweb.webadmin.forms import LoginForm
-from omeroweb.webadmin.webadmin_utils import toBoolean, upgradeCheck
+from omeroweb.webadmin.webadmin_utils import upgradeCheck
 
 from omeroweb.webgateway import views as webgateway_views
 
@@ -81,20 +84,13 @@ from omeroweb.webclient.decorators import render_response
 from omeroweb.webclient.show import Show, IncorrectMenuError
 from omeroweb.connector import Connector
 from omeroweb.decorators import ConnCleaningHttpResponse, parse_url, get_client_ip
+from omeroweb.webgateway.util import getIntOrDefault
 
 import tree
 
 logger = logging.getLogger(__name__)
 
 logger.info("INIT '%s'" % os.getpid())
-
-# helper method
-def getIntOrDefault(request, name, default):
-    try:
-        index = int(request.REQUEST.get(name, default))
-    except ValueError:
-        index = 0
-    return index
 
 
 ################################################################################
@@ -137,8 +133,13 @@ def login(request):
                 userGroupId = conn.getAdminService().getSecurityRoles().userGroupId
                 if userGroupId in conn.getEventContext().memberOfGroups:
                     request.session['connector'] = connector
-                    upgradeCheck()
-
+                    # UpgradeCheck URL should be loaded from the server or loaded
+                    # omero.web.upgrades.url allows to customize web only
+                    try:
+                        upgrades_url = settings.UPGRADES_URL
+                    except:
+                        upgrades_url = conn.getUpgradesUrl()
+                    upgradeCheck(url=upgrades_url)
                     # if 'active_group' remains in session from previous login, check it's valid for this user
                     if request.session.get('active_group'):
                         if request.session.get('active_group') not in conn.getEventContext().memberOfGroups:
@@ -569,16 +570,84 @@ def load_data(request, o1_type=None, o1_id=None, o2_type=None, o2_id=None, o3_ty
     return context
 
 
-@login_required(setGroupContext=True)
+@login_required()
+@render_response()
+def load_chgrp_groups(request, conn=None, **kwargs):
+    """
+    Get the potential groups we can move selected data to.
+    These will be groups that the owner(s) of selected objects is a member of.
+    Objects are specified by query string like: ?Image=1,2&Dataset=3
+    If no selected objects are specified, simply list the groups that the
+    current user is a member of.
+    Groups list will exclude the 'current' group context.
+    """
+
+    ownerIds = []
+    currentGroups = set()
+    groupSets = []
+    groups = {}
+    owners = {}
+    for dtype in ("Project", "Dataset", "Image", "Screen", "Plate"):
+        oids = request.REQUEST.get(dtype, None)
+        if oids is not None:
+            for o in conn.getObjects(dtype, oids.split(",")):
+                ownerIds.append(o.getDetails().owner.id.val)
+                currentGroups.add(o.getDetails().group.id.val)
+    ownerIds = list(set(ownerIds))
+    # In case we were passed no objects or they weren't found
+    if len(ownerIds) == 0:
+        ownerIds = [conn.getUserId()]
+    for owner in conn.getObjects("Experimenter", ownerIds):
+        # Each owner has a set of groups
+        gids = []
+        owners[owner.id] = owner.getFullName()
+        for group in owner.copyGroupExperimenterMap():
+            groups[group.parent.id.val] = group.parent
+            gids.append(group.parent.id.val)
+        groupSets.append(set(gids))
+
+    # Can move to groups that all owners are members of...
+    targetGroupIds = set.intersection(*groupSets)
+    #...but not 'user' group
+    userGroupId = conn.getAdminService().getSecurityRoles().userGroupId
+    targetGroupIds.remove(userGroupId)
+
+    # if all the Objects are in a single group, exclude it from the target groups
+    if len(currentGroups) == 1:
+        targetGroupIds.remove(currentGroups.pop())
+
+    def getPerms(group):
+        p = group.getDetails().permissions
+        return {'write': p.isGroupWrite(),
+                'annotate': p.isGroupAnnotate(),
+                'read': p.isGroupRead()}
+
+    # From groupIds, create a list of group dicts for json
+    targetGroups = []
+    for gid in targetGroupIds:
+        targetGroups.append({
+            'id':gid,
+            'name': groups[gid].name.val,
+            'perms': getPerms(groups[gid])
+        })
+    targetGroups.sort(key=lambda x: x['name'])
+
+    owners = [[k, v] for k, v in owners.items()]
+
+    return {'owners': owners, 'groups': targetGroups}
+
+
+@login_required()
 @render_response()
 def load_chgrp_target(request, group_id, target_type, conn=None, **kwargs):
     """ Loads a tree for user to pick target Project, Dataset or Screen """
 
     # filter by group (not switching group)
     conn.SERVICE_OPTS.setOmeroGroup(int(group_id))
+    owner = getIntOrDefault(request, 'owner', None)
 
     manager= BaseContainer(conn)
-    manager.listContainerHierarchy()
+    manager.listContainerHierarchy(owner)
     template = 'webclient/data/chgrp_target_tree.html'
 
     show_projects = target_type in ('project', 'dataset')
@@ -980,6 +1049,10 @@ def load_metadata_acquisition(request, c_type, c_id, conn=None, share_id=None, *
     form_channels = list()
     form_lasers = list()
 
+    lasertypes = list(conn.getEnumerationEntries("LaserType"))
+    arctypes = list(conn.getEnumerationEntries("ArcType"))
+    filamenttypes = list(conn.getEnumerationEntries("FilamentType"))
+
     # various enums we need for the forms (don't load unless needed)
     mediums =  None
     immersions = None
@@ -989,14 +1062,15 @@ def load_metadata_acquisition(request, c_type, c_id, conn=None, share_id=None, *
         if c_type == "well":
             manager.image = manager.well.getImage(index)
         if share_id is None:
-            manager.originalMetadata()
+            manager.companionFiles()
         manager.channelMetadata()
         for theC, ch in enumerate(manager.channel_metadata):
             logicalChannel = ch.getLogicalChannel()
             if logicalChannel is not None:
                 channel = dict()
                 channel['form'] = MetadataChannelForm(initial={'logicalChannel': logicalChannel,
-                                        'excitationWave': ch.getExcitationWave(), 'emissionWave': ch.getEmissionWave(),
+                                        'exWave': ch.getExcitationWave(units=True),
+                                        'emWave': ch.getEmissionWave(units=True),
                                         'illuminations': list(conn.getEnumerationEntries("IlluminationI")),
                                         'contrastMethods': list(conn.getEnumerationEntries("ContrastMethodI")),
                                         'modes': list(conn.getEnumerationEntries("AcquisitionModeI"))})
@@ -1022,10 +1096,16 @@ def load_metadata_acquisition(request, c_type, c_id, conn=None, share_id=None, *
 
                     lightSourceSettings = logicalChannel.getLightSourceSettings()
                     if lightSourceSettings is not None and lightSourceSettings._obj is not None:
-                        if lightSourceSettings.getLightSource() is not None:
-                            channel['form_light_source'] = MetadataLightSourceForm(initial={'lightSource': lightSourceSettings.getLightSource(),
+                        lightSrc = lightSourceSettings.getLightSource()
+                        if lightSrc is not None:
+                            lstypes = lasertypes
+                            if lightSrc.OMERO_CLASS == "Arc":
+                                lstypes = arctypes
+                            elif lightSrc.OMERO_CLASS == "Filament":
+                                lstypes = filamenttypes
+                            channel['form_light_source'] = MetadataLightSourceForm(initial={'lightSource': lightSrc,
                                             'lightSourceSettings': lightSourceSettings,
-                                            'lstypes': list(conn.getEnumerationEntries("LaserType")),
+                                            'lstypes': lstypes,
                                             'mediums': list(conn.getEnumerationEntries("LaserMediumI")),
                                             'pulses': list(conn.getEnumerationEntries("PulseI"))})
                 # TODO: We don't display filter sets here yet since they are not populated on Import by BioFormats.
@@ -1105,8 +1185,13 @@ def load_metadata_acquisition(request, c_type, c_id, conn=None, share_id=None, *
                 lasers = list(instrument.getLightSources())
                 if len(lasers) > 0:
                     for l in lasers:
+                        lstypes = lasertypes
+                        if l.OMERO_CLASS == "Arc":
+                            lstypes = arctypes
+                        elif l.OMERO_CLASS == "Filament":
+                            lstypes = filamenttypes
                         form_laser = MetadataLightSourceForm(initial={'lightSource': l,
-                                        'lstypes':list(conn.getEnumerationEntries("LaserType")),
+                                        'lstypes': lstypes,
                                         'mediums': list(conn.getEnumerationEntries("LaserMediumI")),
                                         'pulses': list(conn.getEnumerationEntries("PulseI"))})
                         form_lasers.append(form_laser)
@@ -1122,6 +1207,27 @@ def load_metadata_acquisition(request, c_type, c_id, conn=None, share_id=None, *
     context['template'] = template
     return context
 
+
+@login_required()
+@render_response()
+def load_original_metadata(request, imageId, conn=None, **kwargs):
+
+    image = conn.getObject("Image", imageId)
+    if image is None:
+        raise Http404("No Image found with ID %s" % imageId)
+
+    context = {'template': 'webclient/annotations/original_metadata.html',
+                'imageId': image.getId()}
+    try:
+        om = image.loadOriginalMetadata()
+        if om is not None:
+            context['original_metadata'] = om[0]
+            context['global_metadata'] = om[1]
+            context['series_metadata'] = om[2]
+    except omero.LockTimeout, ex:
+        # 408 is Request Timeout
+        return HttpResponse(content='LockTimeout', status=408)
+    return context
 
 ###########################################################################
 # ACTIONS
@@ -1184,6 +1290,14 @@ def batch_annotate(request, conn=None, **kwargs):
 
     manager = BaseContainer(conn)
     batchAnns = manager.loadBatchAnnotations(objs)
+    # get average values for User ratings and Other ratings.
+    r = [r['ann'].getLongValue() for r in batchAnns['UserRatings']]
+    userRatingAvg = r and sum(r) / len(r) or 0
+    # get all ratings and summarise
+    allratings = [a['ann'] for a in batchAnns['UserRatings']]
+    allratings.extend([a['ann'] for a in batchAnns['OtherRatings']])
+    ratings = manager.getGroupedRatings(allratings)
+
     figScripts = manager.listFigureScripts(objs)
     filesetInfo = None
     iids = []
@@ -1214,7 +1328,7 @@ def batch_annotate(request, conn=None, **kwargs):
     context = {'form_comment':form_comment, 'obj_string':obj_string, 'link_string': link_string,
             'obj_labels': obj_labels, 'batchAnns': batchAnns, 'batch_ann':True, 'index': index,
             'figScripts':figScripts, 'filesetInfo': filesetInfo, 'annotationBlocked': annotationBlocked,
-            'differentGroups':False}
+            'userRatingAvg': userRatingAvg, 'ratings': ratings, 'differentGroups':False}
     if len(groupIds) > 1:
         context['annotationBlocked'] = "Can't add annotations because objects are in different groups"
         context['differentGroups'] = True       # E.g. don't run scripts etc
@@ -1315,6 +1429,31 @@ def annotate_file(request, conn=None, **kwargs):
     context['template'] = template
     return context
 
+
+@login_required()
+@render_response()
+def annotate_rating(request, conn=None, **kwargs):
+    """
+    Handle adding Rating to one or more objects
+    """
+    index = getIntOrDefault(request, 'index', 0)
+    rating = getIntOrDefault(request, 'rating', 0)
+    oids = getObjects(request, conn)
+
+    # add / update rating
+    for otype, objs in oids.items():
+        for o in objs:
+            o.setRating(rating)
+
+    # return a summary of ratings
+    manager = BaseContainer(conn)
+    batchAnns = manager.loadBatchAnnotations(oids)
+    allratings = [a['ann'] for a in batchAnns['UserRatings']]
+    allratings.extend([a['ann'] for a in batchAnns['OtherRatings']])
+    ratings = manager.getGroupedRatings(allratings)
+    return ratings
+
+
 @login_required()
 @render_response()
 def annotate_comment(request, conn=None, **kwargs):
@@ -1359,6 +1498,60 @@ def annotate_comment(request, conn=None, **kwargs):
             return context
     else:
         return HttpResponse(str(form_multi.errors))      # TODO: handle invalid form error
+
+
+@login_required()
+@render_response()
+def annotate_map(request, conn=None, **kwargs):
+    """
+        Handle adding Map Annotations to one or more objects
+        POST data "mapAnnotation" should be list of ['key':'value'] pairs.
+    """
+
+    if request.method != 'POST':
+        raise Http404("Need to POST map annotation data as list of ['key', 'value'] pairs")
+
+    oids = getObjects(request, conn)
+
+    # Use the first object we find to set context (assume all objects are in same group!)
+    # this does not aplly to share
+    if len(oids['share']) < 1:
+        for obs in oids.values():
+            if len(obs) > 0:
+                conn.SERVICE_OPTS.setOmeroGroup(obs[0].getDetails().group.id.val)
+                break
+
+    data = request.POST.get('mapAnnotation')
+    data = json.loads(data)
+
+    annId = request.POST.get('annId')
+    # Create a new annotation
+    if annId is None and len(data) > 0:
+        ann = omero.gateway.MapAnnotationWrapper(conn)
+        ann.setValue(data)
+        ann.setNs(omero.constants.metadata.NSCLIENTMAPANNOTATION)
+        ann.save()
+        for objs in oids.values():
+            for obj in objs:
+                obj.linkAnnotation(ann)
+        annId = ann.getId()
+    # Or update existing annotation
+    elif annId is not None:
+        ann = conn.getObject("MapAnnotation", annId)
+        if len(data) > 0:
+            ann.setValue(data)
+            ann.save()
+            annId = ann.getId()
+        else:
+            # Delete if no data
+            handle = conn.deleteObjects('/Annotation', [annId])
+            try:
+                conn._waitOnCmd(handle)
+            finally:
+                handle.close()
+            annId = None
+
+    return {"annId": annId}
 
 
 @login_required()
@@ -2406,7 +2599,7 @@ def activities(request, conn=None, **kwargs):
         # make a copy of the map in session, so that we can replace non json-compatible objects, without modifying session
         rv[cbString] = copy.copy(request.session['callback'][cbString])
 
-    # return json (not used now, but still an option)
+    # return json (used for testing)
     if 'template' in kwargs and kwargs['template'] == 'json':
         for cbString in request.session.get('callback').keys():
             rv[cbString]['start_time'] = str(request.session['callback'][cbString]['start_time'])
@@ -2501,12 +2694,15 @@ def list_scripts (request, conn=None, **kwargs):
 
     # group scripts into 'folders' (path), named by parent folder name
     scriptMenu = {}
+    scripts_to_ignore = conn.getConfigService() \
+                        .getConfigValue("omero.client.scripts_to_ignore") \
+                        .split(",")
     for s in scripts:
         scriptId = s.id.val
         path = s.path.val
         name = s.name.val
         fullpath = os.path.join(path, name)
-        if fullpath in settings.SCRIPTS_TO_IGNORE:
+        if fullpath in scripts_to_ignore:
             logger.info('Ignoring script %r' % fullpath)
             continue
 
@@ -2771,6 +2967,32 @@ def figure_script(request, scriptName, conn=None, **kwargs):
         context['tags'] = uniqueTags
         context['figureName'] = figureName.replace(" ", "_")
 
+    elif scriptName == "MakeMovie":
+        scriptPath = "/omero/export_scripts/Make_Movie.py"
+        template = "webclient/scripts/make_movie.html"
+
+        # expect to run on a single image at a time
+        image = conn.getObject("Image", imageIds[0])
+        # remove extension (if 3 chars or less)
+        movieName = image.getName().rsplit(".",1)
+        if len(movieName) > 1 and len(movieName[1]) > 3:
+            movieName = ".".join(movieName)
+        else:
+            movieName = movieName[0]
+        # make sure name is not a path
+        context['movieName'] = os.path.basename(movieName)
+        chs = []
+        for c in image.getChannels():
+            chs.append({
+                'active': c.isActive(),
+                'color': c.getColor().getHtml(),
+                'label': c.getLabel()
+                })
+        context['channels'] = chs
+        context['sizeT'] = image.getSizeT()
+        context['sizeZ'] = image.getSizeZ()
+
+
     scriptService = conn.getScriptService()
     scriptId = scriptService.getScriptID(scriptPath);
     if (scriptId < 0):
@@ -2823,9 +3045,29 @@ def chgrp(request, conn=None, **kwargs):
         raise AttributeError("chgrp: No group_id specified")
     group_id = long(group_id)
 
+    def getObjectOwnerId(r):
+        for t in ["Dataset", "Image", "Plate"]:
+            ids = r.REQUEST.get(t, None)
+            if ids is not None:
+                for o in list(conn.getObjects(t, ids.split(","))):
+                    return o.getDetails().owner.id.val
+
     group = conn.getObject("ExperimenterGroup", group_id)
-    target_id = request.REQUEST.get('target_id', None)      # E.g. "dataset-234"
-    container_id = target_id is not None and target_id.split("-")[1] or None
+    new_container_name = request.REQUEST.get('new_container_name', None)
+    new_container_type = request.REQUEST.get('new_container_type', None)
+    container_id = None
+
+    # Context must be set to owner of data, E.g. to create links.
+    ownerId = getObjectOwnerId(request)
+    conn.SERVICE_OPTS.setOmeroUser(ownerId)
+    if (new_container_name is not None and len(new_container_name) > 0 and
+                new_container_type is not None):
+        conn.SERVICE_OPTS.setOmeroGroup(group_id)
+        container_id = conn.createContainer(new_container_type, new_container_name)
+    # No new container, check if target is specified
+    if container_id is None:
+        target_id = request.REQUEST.get('target_id', None)      # E.g. "dataset-234"
+        container_id = target_id is not None and target_id.split("-")[1] or None
     dtypes = ["Project", "Dataset", "Image", "Screen", "Plate"]
     for dtype in dtypes:
         oids = request.REQUEST.get(dtype, None)

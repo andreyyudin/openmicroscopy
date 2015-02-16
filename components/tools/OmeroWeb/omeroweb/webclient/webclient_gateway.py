@@ -62,6 +62,8 @@ from django.utils.encoding import smart_str
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 
+from omero.gateway.utils import toBoolean
+
 try:
     import hashlib
     hash_sha1 = hashlib.sha1
@@ -168,6 +170,24 @@ class OmeroWebGateway (omero.gateway.BlitzGateway):
             logger.error(traceback.format_exc())
             return False
     
+    def getOrphanedContainerSettings(self):
+        name = self.getConfigService().getConfigValue("omero.client.ui.tree.orphans.name") or "Orphaned image"
+        description = self.getConfigService().getConfigValue("omero.client.ui.tree.orphans.description") or "This is a virtual container with orphaned images."
+        return name, description
+
+    def getDropdownMenuSettings(self):
+        dropdown_menu = dict()
+        if toBoolean(self.getConfigService().getConfigValue("omero.client.ui.menu.dropdown.leaders.enabled")):
+            dropdown_menu["leaders"] = self.getConfigService() \
+                .getConfigValue("omero.client.ui.menu.dropdown.leaders")
+        if toBoolean(self.getConfigService().getConfigValue("omero.client.ui.menu.dropdown.colleagues.enabled")):
+            dropdown_menu["colleagues"] = self.getConfigService() \
+                 .getConfigValue("omero.client.ui.menu.dropdown.colleagues")
+        if toBoolean(self.getConfigService().getConfigValue("omero.client.ui.menu.dropdown.everyone.enabled")):
+            dropdown_menu["everyone"] = self.getConfigService() \
+                .getConfigValue("omero.client.ui.menu.dropdown.everyone")
+        return dropdown_menu
+
     ##############################################
     ##   IAdmin                                 ##
     
@@ -269,6 +289,17 @@ class OmeroWebGateway (omero.gateway.BlitzGateway):
         
         conf = self.getConfigService()
         return conf.getConfigValue("omero.version")
+
+    def getUpgradesUrl(self):
+        """
+        Retrieves a configuration value "omero.upgrades.url" from
+        the backend store.
+        
+        @return:        String
+        """
+        
+        conf = self.getConfigService()
+        return conf.getConfigValue("omero.upgrades.url")
 
 
     #########################################################
@@ -497,6 +528,56 @@ class OmeroWebGateway (omero.gateway.BlitzGateway):
         for e in q.findAllByQuery(sql, p, self.SERVICE_OPTS):
             kwargs = {'link': omero.gateway.BlitzObjectWrapper(self, e.copyDatasetLinks()[0])}
             yield ImageWrapper(self, e, None, **kwargs)
+
+    def createDataset(self, name, description=None, img_ids=None):
+        """ 
+        Creates a Dataset and adds images if img_ids is specified.
+        Returns the new Dataset ID.
+        """
+        ds = omero.model.DatasetI()
+        ds.name = rstring(str(name))
+        if description is not None and description != "" :
+            ds.description = rstring(str(description))
+        dsid = self.saveAndReturnId(ds)
+        if img_ids is not None:
+            iids = [int(i) for i in img_ids.split(",")]
+            links = []
+            for iid in iids:
+                link = omero.model.DatasetImageLinkI()
+                link.setParent(omero.model.DatasetI(dsid, False))
+                link.setChild(omero.model.ImageI(iid, False))
+                links.append(link)
+            self.saveArray(links)
+        return dsid
+
+    def createProject(self, name, description=None):
+        """ Creates new Project and returns ID """
+
+        pr = omero.model.ProjectI()
+        pr.name = rstring(str(name))
+        if description is not None and description != "" :
+            pr.description = rstring(str(description))
+        return self.saveAndReturnId(pr)
+
+    def createScreen(self, name, description=None):
+        """ Creates new Screen and returns ID """
+
+        sc = omero.model.ScreenI()
+        sc.name = rstring(str(name))
+        if description is not None and description != "" :
+            sc.description = rstring(str(description))
+        return self.saveAndReturnId(sc)
+
+    def createContainer(self, dtype, name, description=None):
+        """ Creates new Project, Dataset or Screen and returns ID """
+
+        dtype = dtype.lower()
+        if dtype == "project":
+            return self.createProject(name, description)
+        elif dtype == "dataset":
+            return self.createDataset(name, description)
+        elif dtype == "screen":
+            return self.createScreen(name, description)
     
     # DATA RETRIVAL BY TAGs
     def findTag (self, name, desc=None):
@@ -2029,6 +2110,54 @@ class OmeroWebObjectWrapper (object):
         if self.canChgrp(): flags.append("canChgrp")
         return " ".join(flags)
 
+    def setRating(self, rating):
+        """
+        Add a rating (long) annotation to the object, or update an existing rating.
+        If rating is zero, we remove any existing rating annotation.
+        """
+        rating_ns = omero.constants.metadata.NSINSIGHTRATING
+        parent_type = self.OMERO_CLASS
+        userid = self._conn.getUserId()
+
+        ratingAnns = list(self._conn.getAnnotationLinks(parent_type, parent_ids=[self.id], ns=rating_ns))
+        # filter for links I own
+        ratingAnns = [r for r in ratingAnns if r.getDetails().owner.id.val == userid]
+        ratingLink = ratingAnns and ratingAnns[0] or None
+
+        def getLinkCount(annId):
+            linkCount = 0
+            for parentType in ["Project", "Dataset", "Image", "Screen", "Plate", "PlateAcquisition", "Well"]:
+                annLinks = list(self._conn.getAnnotationLinks(parentType, ann_ids=[annId]))
+                linkCount += len(annLinks)
+            return linkCount
+
+        def addRating(value):
+            if value == 0:
+                return
+            ratingAnn = omero.model.LongAnnotationI()
+            ratingAnn.setLongValue( rlong(value) )
+            ratingAnn.setNs( rstring(rating_ns) )
+            self._conn.SERVICE_OPTS.setOmeroGroup(self.getDetails().group.id.val)
+            ratingAnn = self._conn.getUpdateService().saveAndReturnObject(ratingAnn, self._conn.SERVICE_OPTS)
+            self.linkAnnotation(AnnotationWrapper(self._conn, ratingAnn))
+
+        if ratingLink is not None:
+            ratingAnn = ratingLink.getChild()
+            # if rating is only used by this object, we can update or delete
+            if getLinkCount(ratingAnn.id) == 1:
+                if rating > 0:
+                    ratingAnn.setLongValue( rlong(rating) )
+                    ratingAnn.save()
+                else:
+                    self._conn.deleteObjectDirect(ratingLink._obj)
+                    self._conn.deleteObjectDirect(ratingAnn._obj)
+            # otherwise, unlink and create a new rating
+            else:
+                self._conn.deleteObjectDirect(ratingLink._obj)
+                addRating(rating)
+        else:
+            addRating(rating)
+
 
 class ExperimenterWrapper (OmeroWebObjectWrapper, omero.gateway.ExperimenterWrapper): 
     """
@@ -2098,16 +2227,16 @@ class ExperimenterGroupWrapper (OmeroWebObjectWrapper, omero.gateway.Experimente
         @return:    {'leaders': list L{ExperimenterWrapper}, 'colleagues': list L{ExperimenterWrapper}}
         @rtype:     dict
         """
-        
+        dropdown_menu = self._conn.getDropdownMenuSettings()
         summary = self._conn.groupSummary(self.getId())
-        if settings.UI_MENU_DROPDOWN.get("LEADERS", None):
+        if "leaders" in dropdown_menu.keys():
             self.leaders = summary["leaders"]
             self.leaders.sort(key=lambda x: x.getLastName().lower())
-        if settings.UI_MENU_DROPDOWN.get("COLLEAGUES", None):
+        if "colleagues" in dropdown_menu.keys():
             self.colleagues = summary["colleagues"]
             self.colleagues.sort(key=lambda x: x.getLastName().lower())
         # Only show 'All Members' option if configured, and we're not in a private group
-        if settings.UI_MENU_DROPDOWN.get("ALL", None):
+        if "everyone" in dropdown_menu:
             if self.details.permissions.isGroupRead() or self._conn.isAdmin() or self.isOwner():
                 self.all = True
 

@@ -2,7 +2,7 @@
  * org.openmicroscopy.shoola.agents.iviewer.view.ImViewerModel
  *
  *------------------------------------------------------------------------------
- *  Copyright (C) 2006-2014 University of Dundee. All rights reserved.
+ *  Copyright (C) 2006-2015 University of Dundee. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -100,8 +100,6 @@ import pojos.ImageData;
 import pojos.PixelsData;
 import pojos.WellData;
 import pojos.WellSampleData;
-
-import com.sun.opengl.util.texture.TextureData;
 
 /** 
 * The Model component in the <code>ImViewer</code> MVC triad.
@@ -984,8 +982,12 @@ class ImViewerModel
 		loader.load();
 	}
 
-	/** Fires an asynchronous retrieval of the rendered image. */
-	void fireImageRetrieval()
+	/**
+	 * Fires an asynchronous retrieval of the rendered image.
+	 * 
+	 * @param compression The compression level.
+	 */
+	void fireImageRetrieval(int compression)
 	{
 		Renderer rnd = metadataViewer.getRenderer();
 		if (rnd == null) return;
@@ -995,13 +997,11 @@ class ImViewerModel
 			browser.setUnitBar(true);
 			long pixelsID = getImage().getDefaultPixels().getId();
 			ImageLoader loader = new ImageLoader(component, ctx, 
-					pixelsID, pDef, false);
+					pixelsID, pDef, false, compression);
 			loader.load();
 			loaders.put(IMAGE, loader);
 		} else {
-			if (ImViewerAgent.hasOpenGLSupport()) 
-				component.setImage(rnd.renderPlaneAsTexture(pDef));
-			else component.setImage(rnd.renderPlane(pDef));
+			component.setImage(rnd.renderPlane(pDef, compression));
 		}
 	}
 
@@ -1028,23 +1028,6 @@ class ImViewerModel
 		pDef.z = getDefaultZ();
 		pDef.slice = omero.romio.XY.value;
 		return rnd.renderPlane(pDef);
-	}
-
-	/**
-	 * This method should only be invoked when we save the displayed image
-	 * and split its components.
-	 * 
-	 * @return See above.
-	 */
-	TextureData getSplitComponentImageAsTexture()
-	{
-		Renderer rnd = metadataViewer.getRenderer();
-		if (rnd == null) return null;
-		PlaneDef pDef = new PlaneDef();
-		pDef.t = getDefaultT();
-		pDef.z = getDefaultZ();
-		pDef.slice = omero.romio.XY.value;
-		return rnd.renderPlaneAsTexture(pDef);
 	}
 
 	/** Notifies that the rendering control has been loaded. */
@@ -1389,23 +1372,6 @@ class ImViewerModel
 	 */
 	BufferedImage getGridImage() { return browser.getGridImage(); }
 
-	/**
-	 * Returns the main image as a texture data.
-	 * 
-	 * @return See above.
-	 */
-	TextureData getImageAsTexture() { return browser.getImageAsTexture(); }
-	
-	/**
-	 * Returns the projected image as a texture data.
-	 * 
-	 * @return See above.
-	 */
-	TextureData getProjectedImageAsTexture()
-	{
-		return browser.getProjectedImageAsTexture();
-	}
-	
 	/**
 	 * Returns the size in microns of a pixel along the X-axis.
 	 * 
@@ -2444,31 +2410,6 @@ class ImViewerModel
 	 * @return See above.
 	 */
 	Collection getMeasurements() { return measurements; }
-	
-	/**
-	 * Sets the retrieved image, returns the a magnification or <code>-1</code>
-	 * if no magnification factor computed. 
-	 * 
-	 * @param image The image to set.
-	 * @return See above.
-	 */
-	double setImageAsTexture(TextureData image)
-	{
-		state = ImViewer.READY; 
-		if (image != null) browser.setRenderedImage(image);
-		loaders.remove(IMAGE);
-		firstTime = false;
-		//update image icon
-		//28/02 added to speed up process, turn back on for 4.1
-		/*
-		if (imageIcon == null) {
-			computeSizes();
-			imageIcon = Factory.magnifyImage(factor, image);
-		}
-		*/
-		if (image == null) return 1;
-		return initZoomFactor();
-	}
 
 	/**
 	 * Brings up the activity options.
@@ -2870,21 +2811,14 @@ class ImViewerModel
 		Tile tile;
 		Object image;
 		BufferedImage bi;
-		TextureData data;
 		while (i.hasNext()) {
 			tile = i.next();
 			image = tile.getImage();
-			if (image != null) {
-				if (image instanceof BufferedImage) {
-					bi = (BufferedImage) image;
-					bi.getGraphics().dispose();
-					bi.flush();
-					tile.setImage(null);
-				} else {
-					data = (TextureData) image;
-					data.flush();
-					tile.setImage(null);
-				}
+			if (image != null && image instanceof BufferedImage) {
+			    bi = (BufferedImage) image;
+                bi.getGraphics().dispose();
+                bi.flush();
+                tile.setImage(null);
 			}
 		}
 	}

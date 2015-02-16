@@ -2,7 +2,7 @@
  * org.openmicroscopy.shoola.agents.metadata.editor.EditorUI 
  *
  *------------------------------------------------------------------------------
- *  Copyright (C) 2006-2014 University of Dundee. All rights reserved.
+ *  Copyright (C) 2006-2015 University of Dundee. All rights reserved.
  *
  *
  * 	This program is free software; you can redistribute it and/or modify
@@ -209,7 +209,10 @@ class EditorUI
 	 * @param desc The description of (i. e. tooltip for) the tap
 	 */
 	private void addTab(String title, Component comp, String desc) {
-	    tabPane.addTab(title, null, new JScrollPane(comp), desc);
+		JScrollPane sp = new JScrollPane(comp);
+		sp.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+		sp.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+	    tabPane.addTab(title, null, sp, desc);
 	}
 	
 	/** Initializes the UI components. */
@@ -313,9 +316,10 @@ class EditorUI
     {
         ImageData img = model.getImage();
         if (img == null) return;
-        tabPane.setEnabledAt(ACQUISITION_INDEX, img.getId() > 0);
+        boolean multi = model.isMultiSelection();
         boolean preview = model.isPreviewAvailable();
-        tabPane.setEnabledAt(RND_INDEX, preview);
+        tabPane.setEnabledAt(RND_INDEX, preview && !multi);
+        tabPane.setEnabledAt(ACQUISITION_INDEX, !multi && img.getId() > 0);
         if (!preview) {
             tabPane.setToolTipTextAt(RND_INDEX, 
                     "Only available for non big images.");
