@@ -70,7 +70,9 @@ Params in render_image_region/<iid>/<z>/<t>/<w>/<h>/ are:
     - t:    T index
 """
 
-render_image_region_quality = (r'^render_image_region_quality/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?P<q>[^/]+)/$', 'webgateway.views.render_image_region_quality')
+render_image_region_quality = (
+    r'^render_image_region_quality/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?P<q>[^/]+)/$',
+    'webgateway.views.render_image_region_quality')
 """
 Returns a jpeg of the OMERO image, rendering only a region specified in query string as
 region=x,y,width,height. E.g. region=0,512,256,256. If the image is much bigger than the
@@ -142,7 +144,9 @@ Params in render_thumbnail/<iid>/<w>/<h> are:
     - h:    Optional max height
 """
 
-render_slice_thumbnail = url(r'^render_slice_thumbnail/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?:(?P<w>[^/]+)/)?(?:(?P<h>[^/]+)/)?$', 'webgateway.views.render_slice_thumbnail')
+render_slice_thumbnail = url(
+    r'^render_slice_thumbnail/(?P<iid>[^/]+)/(?P<z>[^/]+)/(?P<t>[^/]+)/(?:(?P<w>[^/]+)/)?(?:(?P<h>[^/]+)/)?$',
+    'webgateway.views.render_slice_thumbnail')
 """
 Returns a thumbnail jpeg of the OMERO Image in a thumbnail, optionally scaled to max-width and max-height.
 See L{views.render_thumbnail}. Uses current rendering settings. 
